@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "../../../NLP/EX1.1"
+		},
+		{
+			"name": "VoiceControl_ESP32",
+			"path": ".."
+		}
+	],
+	"settings": {}
+}

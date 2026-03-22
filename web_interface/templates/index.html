@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quạt Thông Minh — Dashboard</title>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Helvetica, Arial, sans-serif;
+      background: #111;
+      color: #eee;
+      min-height: 100vh;
+      padding: 16px;
+    }
+
+    h1 {
+      text-align: center;
+      color: #ffcc00;
+      font-size: 1.8rem;
+      letter-spacing: 2px;
+      margin-bottom: 4px;
+    }
+
+    .subtitle {
+      text-align: center;
+      color: #666;
+      font-size: 0.85rem;
+      margin-bottom: 20px;
+    }
+
+    /* ── Cards ── */
+    .card {
+      background: #1e1e1e;
+      border: 1px solid #2a2a2a;
+      border-radius: 14px;
+      padding: 18px 20px;
+      margin-bottom: 14px;
+    }
+
+    .card-title {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: #555;
+      margin-bottom: 14px;
+    }
+
+    /* ── Connection badges ── */
+    .badge-row { display: flex; gap: 10px; flex-wrap: wrap; }
+
+    .badge {
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: bold;
+    }
+    .badge-ok  { background: #0d2b0d; color: #4CAF50; border: 1px solid #4CAF50; }
+    .badge-err { background: #2b0d0d; color: #ff5555; border: 1px solid #ff5555; }
+
+    /* ── LED indicator ── */
+    .led-row { display: flex; align-items: center; gap: 18px; }
+
+    #led-bulb {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      background: #2a2a2a;
+      border: 3px solid #333;
+      flex-shrink: 0;
+      transition: background 0.4s, box-shadow 0.4s;
+    }
+    #led-bulb.off    { background: #2a2a2a; box-shadow: none; }
+    #led-bulb.red    { background: #ff4444; box-shadow: 0 0 22px 8px #ff444466; }
+    #led-bulb.yellow { background: #ffcc00; box-shadow: 0 0 22px 8px #ffcc0066; }
+    #led-bulb.green  { background: #44ff55; box-shadow: 0 0 22px 8px #44ff5566; }
+
+    .led-text-level { font-size: 1.5rem; font-weight: bold; }
+    .led-text-name  { color: #888; margin-top: 4px; font-size: 0.9rem; }
+
+    /* ── Color swatches ── */
+    .swatch-row { display: flex; gap: 8px; margin-top: 14px; }
+    .swatch {
+      flex: 1;
+      height: 32px;
+      border-radius: 6px;
+      border: 2px solid transparent;
+      cursor: pointer;
+      transition: border-color 0.2s, transform 0.15s;
+    }
+    .swatch:hover    { transform: scale(1.06); }
+    .swatch.active   { border-color: #fff; }
+    #sw0 { background: #333; }
+    #sw1 { background: #ff4444; }
+    #sw2 { background: #ffcc00; }
+    #sw3 { background: #44ff55; }
+
+    /* ── Buttons ── */
+    .btn-row { display: flex; gap: 12px; }
+
+    .btn {
+      flex: 1;
+      padding: 16px;
+      font-size: 1rem;
+      font-weight: bold;
+      border: none;
+      border-radius: 10px;
+      color: white;
+      cursor: pointer;
+      transition: filter 0.15s, transform 0.1s;
+    }
+    .btn:active   { transform: scale(0.97); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-tang { background: #4CAF50; }
+    .btn-tat  { background: #555; }
+    .btn-tang:hover:not(:disabled) { filter: brightness(1.15); }
+    .btn-tat:hover:not(:disabled)  { filter: brightness(1.25); }
+
+    /* ── Mic chart ── */
+    .chart-wrap {
+      position: relative;
+      height: 180px;
+    }
+
+    /* ── Volume meter ── */
+    .vol-track {
+      height: 10px;
+      background: #2a2a2a;
+      border-radius: 5px;
+      overflow: hidden;
+      margin-top: 12px;
+    }
+    #vol-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #4CAF50 0%, #ffcc00 60%, #ff4444 100%);
+      border-radius: 5px;
+      transition: width 0.08s linear;
+    }
+    .vol-info {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 6px;
+      font-size: 0.78rem;
+      color: #666;
+    }
+
+    @media (max-width: 400px) {
+      h1 { font-size: 1.3rem; }
+      .btn { padding: 13px; font-size: 0.9rem; }
+    }
+
+    /* ── Recording ── */
+    .rec-row { display: flex; gap: 12px; align-items: center; }
+
+    #btn-rec {
+      flex: 1; padding: 16px; font-size: 1rem; font-weight: bold;
+      border: none; border-radius: 10px; color: white; cursor: pointer;
+      background: #e53935;
+      transition: filter 0.15s, transform 0.1s, background 0.3s;
+    }
+    #btn-rec:active { transform: scale(0.97); }
+    #btn-rec.recording { background: #b71c1c; animation: pulse-border 1s ease-in-out infinite; }
+    #btn-rec:hover { filter: brightness(1.12); }
+
+    @keyframes pulse-border {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(183,28,28,0.5); }
+      50%       { box-shadow: 0 0 0 8px rgba(183,28,28,0); }
+    }
+
+    .rec-indicator {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 14px;
+      background: #2a0a0a; border: 1px solid #b71c1c; border-radius: 10px;
+      font-size: 0.85rem; color: #ff8a80;
+      white-space: nowrap;
+    }
+    .rec-dot {
+      width: 10px; height: 10px; border-radius: 50%; background: #ff1744;
+      animation: blink 0.8s ease-in-out infinite;
+    }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.1; } }
+
+    .hidden { display: none !important; }
+
+    .playback-wrap { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+    .playback-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; color: #888; }
+    .playback-info  { font-size: 0.82rem; color: #666; margin-top: 2px; }
+    audio { width: 100%; border-radius: 8px; accent-color: #4fc3f7; }
+    .btn-dl {
+      padding: 10px 16px; font-size: 0.85rem; font-weight: bold;
+      border: none; border-radius: 8px; background: #1565c0;
+      color: white; cursor: pointer;
+    }
+    .btn-dl:hover { filter: brightness(1.2); }
+
+    .fps-label { color: #444; font-size: 0.75rem; }
+
+    /* Time window buttons */
+    .tw-btn {
+      padding: 4px 10px; font-size: 0.75rem; font-weight: bold;
+      border: 1px solid #444; border-radius: 6px;
+      background: #1e1e1e; color: #888; cursor: pointer;
+      transition: all 0.15s;
+    }
+    .tw-btn:hover { border-color: #4fc3f7; color: #4fc3f7; }
+    .tw-btn.tw-active { background: #4fc3f7; color: #111; border-color: #4fc3f7; }
+  </style>
+</head>
+<body>
+
+  <h1>QUẠT THÔNG MINH</h1>
+  <p class="subtitle">Dashboard · Điều khiển &amp; Giám sát</p>
+
+  <!-- Connection status -->
+  <div class="card">
+    <div class="card-title">Kết nối</div>
+    <div class="badge-row">
+      <span class="badge badge-err" id="badge-ws">WebSocket: …</span>
+      <span class="badge badge-err" id="badge-esp">ESP32: …</span>
+      <span class="badge badge-err" id="badge-serial">Serial: …</span>
+    </div>
+  </div>
+
+  <!-- LED Status -->
+  <div class="card">
+    <div class="card-title">Trạng thái đèn LED</div>
+    <div class="led-row">
+      <div id="led-bulb" class="off"></div>
+      <div>
+        <div class="led-text-level">Cấp <span id="disp-level">0</span></div>
+        <div class="led-text-name"  id="disp-name">TẮT</div>
+      </div>
+    </div>
+    <!-- visual level swatches (read-only indicator) -->
+    <div class="swatch-row">
+      <div class="swatch active" id="sw0" title="Tắt"></div>
+      <div class="swatch"        id="sw1" title="Số 1 – Đỏ"></div>
+      <div class="swatch"        id="sw2" title="Số 2 – Vàng"></div>
+      <div class="swatch"        id="sw3" title="Số 3 – Xanh lá"></div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="card">
+    <div class="card-title">Điều khiển</div>
+    <div class="btn-row">
+      <button class="btn btn-tang" id="btn-tang" onclick="sendCmd('tang')">TĂNG TỐC (+)</button>
+      <button class="btn btn-tat"  id="btn-tat"  onclick="sendCmd('tat')">TẮT QUẠT</button>
+    </div>
+  </div>
+
+  <!-- Mic waveform (continuous) -->
+  <div class="card">
+    <div class="card-title">Sóng âm Microphone — FULL HISTORY v2</div>
+    <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">
+      <span style="color:#555;font-size:0.78rem" id="fps-label">0 pts/s</span>
+      <button class="tw-btn" style="margin-left:auto" id="btn-clear" onclick="clearChart()">Xoá</button>
+    </div>
+    <div class="chart-wrap" style="height:220px">
+      <canvas id="micChart"></canvas>
+    </div>
+    <div class="vol-track"><div id="vol-fill"></div></div>
+    <div class="vol-info">
+      <span>Biên độ TB: <strong id="vol-avg">0</strong></span>
+      <span>Đỉnh: <strong id="vol-peak">0</strong></span>
+      <span class="fps-label" id="fps-label2">0 pts/s</span>
+    </div>
+  </div>
+
+  <!-- Recording & Playback -->
+  <div class="card">
+    <div class="card-title">Thu âm &amp; Nghe lại</div>
+    <div class="rec-row">
+      <button id="btn-rec" onclick="toggleRecord()">&#9679; THU ÂM</button>
+      <div id="rec-indicator" class="rec-indicator hidden">
+        <div class="rec-dot"></div>
+        <span id="rec-timer">0:00</span>
+        <span>Đang thu…</span>
+      </div>
+    </div>
+    <div id="playback-section" class="playback-wrap hidden">
+      <div class="playback-label">Nghe lại</div>
+      <div class="playback-info" id="rec-info"></div>
+      <audio id="audio-player" controls></audio>
+      <button class="btn-dl" onclick="downloadRec()">&#11015; Tải file WAV về máy</button>
+    </div>
+  </div>
+
+  <!-- Voice recognition -->
+  <div class="card">
+    <div class="card-title">Nhận diện giọng nói</div>
+    <div id="transcription-text" style="font-size:1.1rem; color:#4fc3f7; min-height:28px;">
+      Đang lắng nghe...
+    </div>
+    <div id="command-text" style="font-size:0.85rem; color:#888; margin-top:6px;"></div>
+  </div>
+
+  <script>
+    // ── Waveform chart — TOÀN BỘ từ t=0 đến hiện tại ──────────
+
+    const allData = [];      // KHÔNG BAO GIỜ xóa — lưu tất cả từ lúc mở web
+    let globalPeak = 1;
+    let ptsThisSec = 0;
+    let sampleRate  = 720;
+    let lastDataTs  = Date.now();
+
+    const ctx = document.getElementById("micChart").getContext("2d");
+    const micChart = new Chart(ctx, {
+      type: "line",
+      data: { labels: [], datasets: [{
+        data: [],
+        borderColor: "#4fc3f7",
+        borderWidth: 1,
+        pointRadius: 0,
+        fill: { target: "origin", above: "rgba(79,195,247,0.06)", below: "rgba(79,195,247,0.06)" },
+        tension: 0,
+      }]},
+      options: {
+        animation: false,
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        scales: {
+          x: {
+            display: true,
+            grid: { color: "#1a1a1a" },
+            ticks: {
+              color: "#444", font: { size: 9 }, maxTicksLimit: 10,
+              callback: function(val) {
+                const s = parseFloat(this.getLabelForValue(val));
+                if (isNaN(s)) return "";
+                if (s < 60) return s.toFixed(1) + "s";
+                return Math.floor(s/60) + "m" + String(Math.round(s%60)).padStart(2,"0") + "s";
+              }
+            },
+          },
+          y: {
+            grid: { color: "#222" },
+            ticks: { color: "#555", font: { size: 10 },
+              callback: v => v>=1e6?(v/1e6).toFixed(1)+"M":v>=1e3?(v/1e3).toFixed(0)+"k":v }
+          },
+        },
+      },
+    });
+
+    // FPS counter
+    setInterval(() => {
+      sampleRate = ptsThisSec > 0 ? ptsThisSec : sampleRate;
+      document.getElementById("fps-label").textContent =
+        ptsThisSec + " pts/s  |  " + allData.length.toLocaleString() +
+        " mẫu  |  " + (allData.length / sampleRate).toFixed(1) + "s";
+      ptsThisSec = 0;
+    }, 1000);
+
+    // Giữ chart cập nhật ngay cả khi không có data mới
+    setInterval(() => {
+      if (Date.now() - lastDataTs > 500) redraw();
+    }, 300);
+
+    function clearChart() {
+      allData.length = 0;
+      globalPeak = 1;
+      redraw();
+    }
+
+    function redraw() {
+      const n = allData.length;
+      if (n === 0) {
+        micChart.data.labels = [];
+        micChart.data.datasets[0].data = [];
+        micChart.update("none");
+        return;
+      }
+      // Downsample đều — luôn hiện toàn bộ n sample trong MAX_PX pixel
+      const MAX_PX = 1400;
+      let displayed;
+      if (n > MAX_PX) {
+        displayed = [];
+        const step = n / MAX_PX;
+        for (let i = 0; i < MAX_PX; i++)
+          displayed.push(allData[Math.floor(i * step)]);
+      } else {
+        displayed = allData.slice();
+      }
+      // Label x: 0s (trái) → tổng giây (phải), KHÔNG bao giờ thay đổi trục trái
+      const totalSec = n / sampleRate;
+      const labels = displayed.map((_, i) => ((i / displayed.length) * totalSec).toFixed(2));
+
+      micChart.data.labels = labels;
+      micChart.data.datasets[0].data = displayed;
+      micChart.options.scales.y.suggestedMax =  globalPeak * 1.1;
+      micChart.options.scales.y.suggestedMin = -globalPeak * 1.1;
+      micChart.update("none");
+    }
+
+    function updateChart(values) {
+      lastDataTs = Date.now();
+      for (const v of values) {
+        allData.push(v);
+        const abs = Math.abs(v);
+        if (abs > globalPeak) globalPeak = abs;
+      }
+      ptsThisSec += values.length;
+      redraw();
+
+      const avg  = values.reduce((s, v) => s + Math.abs(v), 0) / values.length;
+      const peak = Math.max(...values.map(Math.abs));
+      const pct  = Math.min(100, (avg / globalPeak) * 100);
+      document.getElementById("vol-fill").style.width = pct + "%";
+      document.getElementById("vol-avg").textContent  = fmtNum(Math.round(avg));
+      document.getElementById("vol-peak").textContent = fmtNum(peak);
+    }
+
+    function fmtNum(n) {
+      if (n >= 1e6) return (n / 1e6).toFixed(2) + " M";
+      if (n >= 1e3) return (n / 1e3).toFixed(1) + " k";
+      return String(n);
+    }
+
+    // ── Recording ──────────────────────────────────────────────
+
+    let recState = "idle";
+    let recTimerID = null;
+    let recSecs = 0;
+
+    async function toggleRecord() {
+      if (recState === "idle") await startRecord();
+      else await stopRecord();
+    }
+
+    async function startRecord() {
+      try {
+        const r = await fetch("/api/record/start", { method: "POST" });
+        if (!r.ok) return;
+      } catch(e) { console.error(e); return; }
+      recState = "recording";
+      recSecs = 0;
+      const btn = document.getElementById("btn-rec");
+      btn.textContent = "\u25A0 D\u1eebNG THU";
+      btn.classList.add("recording");
+      document.getElementById("rec-indicator").classList.remove("hidden");
+      document.getElementById("playback-section").classList.add("hidden");
+      recTimerID = setInterval(() => {
+        recSecs++;
+        const m = Math.floor(recSecs / 60);
+        const s = String(recSecs % 60).padStart(2, "0");
+        document.getElementById("rec-timer").textContent = m + ":" + s;
+      }, 1000);
+    }
+
+    async function stopRecord() {
+      clearInterval(recTimerID);
+      recTimerID = null;
+      let data;
+      try {
+        const r = await fetch("/api/record/stop", { method: "POST" });
+        data = await r.json();
+      } catch(e) { console.error(e); }
+      recState = "idle";
+      const btn = document.getElementById("btn-rec");
+      btn.textContent = "\u25CF THU \u00c2M";
+      btn.classList.remove("recording");
+      document.getElementById("rec-indicator").classList.add("hidden");
+      if (data && data.ok) {
+        const sr = Number(data.sample_rate || 0);
+        const srText = sr >= 1000 ? (sr / 1000).toFixed(2) + " kHz" : sr + " Hz";
+        document.getElementById("rec-info").textContent =
+          data.duration + "s  —  " + data.samples.toLocaleString() + " mẫu  @" + srText;
+        const ap = document.getElementById("audio-player");
+        ap.src = "/api/record/audio?t=" + Date.now();
+        document.getElementById("playback-section").classList.remove("hidden");
+      }
+    }
+
+    function downloadRec() {
+      const a = document.createElement("a");
+      a.href = "/api/record/audio";
+      a.download = "recording.wav";
+      a.click();
+    }
+
+    // ── LED update ─────────────────────────────────────────────
+
+    const CSS_CLASS = ["off", "red", "yellow", "green"];
+
+    function updateLED(level, name) {
+      document.getElementById("disp-level").textContent = level;
+      document.getElementById("disp-name").textContent  = name;
+
+      const bulb = document.getElementById("led-bulb");
+      bulb.className = CSS_CLASS[level] ?? "off";
+
+      for (let i = 0; i <= 3; i++) {
+        document.getElementById(`sw${i}`).classList.toggle("active", i === level);
+      }
+    }
+
+    // ── Control buttons ────────────────────────────────────────
+
+    async function sendCmd(cmd) {
+      const btnT = document.getElementById("btn-tang");
+      const btnF = document.getElementById("btn-tat");
+      btnT.disabled = btnF.disabled = true;
+      try {
+        const res  = await fetch(`/api/${cmd}`, { method: "POST" });
+        const data = await res.json();
+        updateLED(data.level, data.name);
+        setESP32Badge(data.esp32_ok);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        btnT.disabled = btnF.disabled = false;
+      }
+    }
+
+    function setESP32Badge(ok) {
+      const b = document.getElementById("badge-esp");
+      b.textContent = ok ? "ESP32: Online" : "ESP32: Offline (local sync)";
+      b.className   = ok ? "badge badge-ok" : "badge badge-err";
+    }
+
+    // ── Initial status fetch ───────────────────────────────────
+
+    fetch("/api/status")
+      .then(r => r.json())
+      .then(d => { updateLED(d.level, d.name); setESP32Badge(true); })
+      .catch(() => {});
+
+    // ── Socket.IO ──────────────────────────────────────────────
+
+    const socket = io();
+
+    socket.on("connect", () => {
+      const b = document.getElementById("badge-ws");
+      b.textContent = "WebSocket: Đã kết nối";
+      b.className   = "badge badge-ok";
+    });
+
+    socket.on("disconnect", () => {
+      const b = document.getElementById("badge-ws");
+      b.textContent = "WebSocket: Mất kết nối";
+      b.className   = "badge badge-err";
+    });
+
+    socket.on("transcription", data => {
+      document.getElementById("transcription-text").textContent = data.text;
+    });
+
+    socket.on("command", data => {
+      document.getElementById("command-text").textContent = "→ Lệnh: " + data.name;
+      if (data.level >= 0) updateLED(data.level, data.name);
+    });
+
+    socket.on("mic_batch", data => {
+      updateChart(data.values);
+      const bs = document.getElementById("badge-serial");
+      const hasSignal = data.values.some(v => v !== 0);
+      bs.textContent = hasSignal ? "Serial: Tín hiệu OK" : "Serial: Kết nối lại…";
+      bs.className   = hasSignal ? "badge badge-ok" : "badge badge-err";
+    });
+  </script>
+</body>
+</html>
