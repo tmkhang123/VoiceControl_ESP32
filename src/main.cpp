@@ -3,12 +3,14 @@
 #include <WebServer.h>
 #include <FastLED.h>
 #include <driver/i2s.h>
+#include <WebSocketsClient.h>
 
-// const char* ssid = "Wutdaheo";
-// const char* password = "AlwaysRed";
+// IP của Python server (máy tính chạy server.py)
+#define SERVER_IP "YOUR_SERVER_IP"   // ← thay bằng IP máy tính chạy server.py
+#define SERVER_PORT 5001
 
-const char *ssid = "YOUR_WIFI_NAME";
-const char *password = "YOUR_WIFI_PASSWORD";
+const char *ssid = "YOUR_WIFI_SSID";       // ← thay bằng tên WiFi
+const char *password = "YOUR_WIFI_PASSWORD"; // ← thay bằng mật khẩu WiFi
 
 #define LED_ONBOARD_PIN 48
 #define FAN_PIN 4
@@ -20,14 +22,27 @@ const char *password = "YOUR_WIFI_PASSWORD";
 #define NUM_LEDS 1
 CRGB leds[NUM_LEDS];
 WebServer server(80);
+WebSocketsClient webSocket;
 
 int capDoHienTai = 0;
 
 #define bufferLen 64
 #define SEND_BUFFER_SIZE 512
-static int16_t sendBuf[SEND_BUFFER_SIZE];
-static int sendBufIdx = 0;
 
+// VAD
+#define VAD_THRESHOLD 500
+#define VAD_HANGOVER_PACKETS 12
+
+// ─── FreeRTOS Queue ───────────────────────────────────────────────────────────
+#define QUEUE_SIZE 4
+
+typedef struct {
+  int16_t data[SEND_BUFFER_SIZE];
+} AudioPacket;
+
+QueueHandle_t audioQueue;
+
+// ─── I2S setup ────────────────────────────────────────────────────────────────
 void i2s_install()
 {
   const i2s_config_t i2s_config = {
@@ -50,6 +65,7 @@ void i2s_setpin()
   i2s_set_pin(I2S_PORT, &pin_config);
 }
 
+// ─── Web UI ───────────────────────────────────────────────────────────────────
 String getHTML()
 {
   String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'>";
@@ -98,6 +114,85 @@ void capNhatTrangThai()
   }
 }
 
+void onWebSocketEvent(WStype_t type, uint8_t *payload, size_t length)
+{
+  if (type == WStype_CONNECTED)
+    Serial.println("[WS] Ket noi server thanh cong!");
+  else if (type == WStype_DISCONNECTED)
+    Serial.println("[WS] Mat ket noi, dang thu lai...");
+}
+
+// ─── Task 1: Audio Capture + VAD (Core 0) ────────────────────────────────────
+void audioTask(void *pvParameters)
+{
+  int32_t sBuffer[bufferLen];
+  int16_t localBuf[SEND_BUFFER_SIZE];
+  int localIdx = 0;
+  int vadHangover = 0;
+
+  Serial.println("[AudioTask] Bat dau tren Core 0");
+
+  while (true)
+  {
+    size_t bytesIn = 0;
+    esp_err_t result = i2s_read(I2S_PORT, &sBuffer, bufferLen * 4, &bytesIn, portMAX_DELAY);
+
+    if (result == ESP_OK && bytesIn > 0)
+    {
+      int samples = bytesIn / 4;
+      for (int i = 0; i < samples; i++)
+      {
+        localBuf[localIdx++] = (int16_t)(sBuffer[i] >> 16);
+
+        if (localIdx >= SEND_BUFFER_SIZE)
+        {
+          // VAD: tính năng lượng trung bình
+          int32_t energy = 0;
+          for (int j = 0; j < SEND_BUFFER_SIZE; j++)
+            energy += abs(localBuf[j]);
+          int32_t avgAmp = energy / SEND_BUFFER_SIZE;
+
+          if (avgAmp > VAD_THRESHOLD)
+            vadHangover = VAD_HANGOVER_PACKETS;
+
+          if (vadHangover > 0)
+          {
+            // Đưa buffer vào Queue để networkTask gửi đi
+            AudioPacket pkt;
+            memcpy(pkt.data, localBuf, sizeof(pkt.data));
+            xQueueSend(audioQueue, &pkt, 0); // non-blocking: bỏ qua nếu queue đầy
+            vadHangover--;
+          }
+          localIdx = 0;
+        }
+      }
+    }
+  }
+}
+
+// ─── Task 2: Network — WebSocket + HTTP (Core 1) ─────────────────────────────
+void networkTask(void *pvParameters)
+{
+  AudioPacket pkt;
+
+  Serial.println("[NetworkTask] Bat dau tren Core 1");
+
+  while (true)
+  {
+    webSocket.loop();
+    server.handleClient();
+
+    // Nhận packet từ audioTask (non-blocking)
+    if (xQueueReceive(audioQueue, &pkt, 0) == pdTRUE)
+    {
+      webSocket.sendBIN((uint8_t *)pkt.data, SEND_BUFFER_SIZE * 2);
+    }
+
+    vTaskDelay(1 / portTICK_PERIOD_MS); // yield cho các task khác
+  }
+}
+
+// ─── Setup ────────────────────────────────────────────────────────────────────
 void setup()
 {
   Serial.begin(921600);
@@ -141,34 +236,38 @@ void setup()
   }
 
   capNhatTrangThai();
+
+  // Kết nối WebSocket tới Python server
+  webSocket.begin(SERVER_IP, SERVER_PORT, "/audio");
+  webSocket.onEvent(onWebSocketEvent);
+  webSocket.setReconnectInterval(3000);
+
+  // ── Tạo Queue và các FreeRTOS Task ──────────────────────────────────────────
+  audioQueue = xQueueCreate(QUEUE_SIZE, sizeof(AudioPacket));
+
+  xTaskCreatePinnedToCore(
+      audioTask,    // hàm task
+      "AudioTask",  // tên (debug)
+      4096,         // stack size (bytes)
+      NULL,         // tham số truyền vào
+      2,            // priority (cao hơn networkTask)
+      NULL,         // task handle (không cần)
+      0             // Core 0
+  );
+
+  xTaskCreatePinnedToCore(
+      networkTask,
+      "NetworkTask",
+      8192,         // stack lớn hơn vì WebSocket dùng nhiều bộ nhớ
+      NULL,
+      1,            // priority thấp hơn
+      NULL,
+      1             // Core 1
+  );
 }
 
+// ─── Loop trống — mọi việc do Task xử lý ─────────────────────────────────────
 void loop()
 {
-  if (WiFi.status() == WL_CONNECTED)
-  {
-    server.handleClient();
-  }
-
-  int32_t sBuffer[bufferLen];
-  size_t bytesIn = 0;
-  esp_err_t result = i2s_read(I2S_PORT, &sBuffer, bufferLen * 4, &bytesIn, 0);
-
-  if (result == ESP_OK && bytesIn > 0)
-  {
-    int samples = bytesIn / 4;
-
-    for (int i = 0; i < samples; i++)
-    {
-      sendBuf[sendBufIdx++] = (int16_t)(sBuffer[i] >> 16);
-
-      if (sendBufIdx >= SEND_BUFFER_SIZE)
-      {
-        uint8_t header[2] = {0xAA, 0x55};
-        Serial.write(header, 2);
-        Serial.write((uint8_t *)sendBuf, SEND_BUFFER_SIZE * 2);
-        sendBufIdx = 0;
-      }
-    }
-  }
+  vTaskDelay(portMAX_DELAY); // nhường hoàn toàn cho FreeRTOS
 }

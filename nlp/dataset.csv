@@ -1,0 +1,143 @@
+text,intent
+bật quạt,TURN_ON
+bật quạt lên,TURN_ON
+bật quạt đi,TURN_ON
+bật lên đi,TURN_ON
+bật quạt cho tôi,TURN_ON
+mở quạt đi,TURN_ON
+mở quạt lên,TURN_ON
+cho mát đi,TURN_ON
+nóng quá bật quạt đi,TURN_ON
+trời nóng quá,TURN_ON
+oi bức quá,TURN_ON
+nóng lắm rồi,TURN_ON
+cho tôi mát với,TURN_ON
+nóng chịu không nổi,TURN_ON
+cho mát nào,TURN_ON
+nóng ghê,TURN_ON
+oi quá đi,TURN_ON
+ngột ngạt quá,TURN_ON
+bật lên cho mát,TURN_ON
+tắt quạt,TURN_OFF
+tắt quạt đi,TURN_OFF
+tắt đi,TURN_OFF
+tắt hết đi,TURN_OFF
+thôi ngủ rồi,TURN_OFF
+ngủ rồi tắt đi,TURN_OFF
+lạnh quá tắt đi,TURN_OFF
+thôi tắt đi,TURN_OFF
+không cần nữa,TURN_OFF
+nghỉ rồi tắt đi,TURN_OFF
+thôi đủ rồi,TURN_OFF
+lạnh quá tắt quạt đi,TURN_OFF
+ngủ được rồi tắt đi,TURN_OFF
+thôi tắt quạt ngủ,TURN_OFF
+tắt quạt giúp tôi,TURN_OFF
+lạnh cóng rồi tắt đi,TURN_OFF
+rét quá tắt đi,TURN_OFF
+tắt quạt ngay,TURN_OFF
+tắt cái quạt đi,TURN_OFF
+tắt quạt đi anh,TURN_OFF
+tắt quạt cho tôi,TURN_OFF
+tắt quạt đi nào,TURN_OFF
+tắt quạt lại đi,TURN_OFF
+tắt ngay đi,TURN_OFF
+lạnh tắt đi,TURN_OFF
+tôi lạnh rồi,TURN_OFF
+thôi đừng chạy nữa,TURN_OFF
+quạt số một,LEVEL_1
+số một thôi,LEVEL_1
+nhẹ thôi,LEVEL_1
+chậm thôi,LEVEL_1
+nhỏ thôi,LEVEL_1
+bật nhẹ thôi,LEVEL_1
+quạt nhẹ thôi,LEVEL_1
+chạy chậm thôi,LEVEL_1
+cấp một đi,LEVEL_1
+số một,LEVEL_1
+bật quạt nhẹ,LEVEL_1
+để số một thôi,LEVEL_1
+nhẹ nhẹ thôi,LEVEL_1
+chạy nhỏ thôi,LEVEL_1
+thấp nhất thôi,LEVEL_1
+vừa thôi,LEVEL_2
+quạt số hai,LEVEL_2
+số hai thôi,LEVEL_2
+vừa phải thôi,LEVEL_2
+không cần mạnh lắm,LEVEL_2
+bình thường thôi,LEVEL_2
+cấp hai đi,LEVEL_2
+hai thôi,LEVEL_2
+quạt vừa thôi,LEVEL_2
+tầm trung thôi,LEVEL_2
+bật vừa thôi,LEVEL_2
+để số hai,LEVEL_2
+mức hai thôi,LEVEL_2
+vừa vừa thôi,LEVEL_2
+không mạnh không yếu,LEVEL_2
+quạt số ba,LEVEL_3
+số ba đi,LEVEL_3
+mạnh nhất đi,LEVEL_3
+nhanh nhất đi,LEVEL_3
+quạt mạnh vào,LEVEL_3
+nóng lắm mạnh lên,LEVEL_3
+cấp ba đi,LEVEL_3
+ba đi,LEVEL_3
+hết cỡ đi,LEVEL_3
+bật mạnh đi,LEVEL_3
+nóng chết được mạnh lên,LEVEL_3
+tối đa đi,LEVEL_3
+mạnh hết cỡ đi,LEVEL_3
+full lên đi,LEVEL_3
+số ba nào,LEVEL_3
+tăng lên,INCREASE
+tăng tốc,INCREASE
+tăng thêm,INCREASE
+tăng lên một chút,INCREASE
+mạnh hơn một chút,INCREASE
+tăng thêm một cấp,INCREASE
+nhanh hơn đi,INCREASE
+tăng tốc độ lên,INCREASE
+thêm một cấp đi,INCREASE
+tăng lên chút nữa,INCREASE
+nóng hơn tăng lên,INCREASE
+tăng thêm tí,INCREASE
+cao hơn một chút,INCREASE
+lên thêm một cấp,INCREASE
+mạnh thêm đi,INCREASE
+hơi lạnh,DECREASE
+lạnh hơi hơi,DECREASE
+nhỏ lại,DECREASE
+giảm xuống,DECREASE
+hạ xuống một chút,DECREASE
+giảm một cấp,DECREASE
+chậm lại,DECREASE
+yếu lại một chút,DECREASE
+lạnh hơi hơi giảm đi,DECREASE
+nhỏ hơn một chút,DECREASE
+giảm tốc độ,DECREASE
+hơi lạnh giảm đi,DECREASE
+bớt mạnh đi,DECREASE
+bớt đi một chút,DECREASE
+thấp hơn một chút,DECREASE
+nhẹ hơn đi,DECREASE
+alo,NONE
+xin chào,NONE
+hello,NONE
+ok,NONE
+ừ,NONE
+được rồi,NONE
+hôm nay đẹp trời,NONE
+bạn khỏe không,NONE
+cảm ơn,NONE
+thôi được rồi,NONE
+à ừ,NONE
+không có gì,NONE
+ý tôi là,NONE
+thật sao,NONE
+vâng,NONE
+dạ,NONE
+ui chao,NONE
+trời ơi,NONE
+ờ thì,NONE
+tôi không nói gì,NONE
