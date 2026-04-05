@@ -1,9 +1,22 @@
+# Web server
 flask
 flask-socketio
-pyserial
 requests
-eventlet
+websockets
+
+# Whisper (CUDA)
 faster-whisper
 nvidia-cublas-cu12
 nvidia-cudnn-cu12
 nvidia-cuda-runtime-cu12
+
+# Speech Enhancement
+deepfilternet
+scipy
+numpy
+
+# NLP
+transformers==4.44.0
+
+# PyTorch (CPU) — cai thu cong:
+# pip install torch torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cpu
