@@ -49,14 +49,15 @@ def add_no_cache_headers(resp):
     resp.headers["Expires"] = "0"
     return resp
 
+
 # =============================================================
-#  CẤU HÌNH — THAY ĐỔI CHO PHÙ HỢP VỚI MÁY 
+#  CẤU HÌNH — THAY ĐỔI CHO PHÙ HỢP VỚI MÁY
 # =============================================================
-ESP32_IP    = "http://YOUR_ESP32_IP"   # IP ESP32 (xem Serial Monitor sau khi upload)
-SERIAL_PORT = "COM5"                 # Cổng COM của ESP32 (auto-detected khi upload)
-BAUD_RATE     = 921600
-CHUNK_SAMPLES = 512
-HEADER        = bytes([0xAA, 0x55])
+ESP32_IP = "http://10.86.21.182"  # IP ESP32 (xem Serial Monitor sau khi upload)
+SERIAL_PORT = "COM5"  # Cổng COM của ESP32 (auto-detected khi upload)
+BAUD_RATE = 921600
+CHUNK_SAMPLES = 1024
+HEADER = bytes([0xAA, 0x55])
 # Fallback sample rate if timing data is unavailable.
 SAMPLE_RATE = 16000
 # =============================================================
@@ -84,7 +85,7 @@ print(f"[DeepFilter] Model sẵn sàng! (sr={DF_SR})")
 PHOBERT_DIR = os.path.join(os.path.dirname(__file__), "..", "nlp", "phobert_intent")
 print("[PhoBERT] Đang load model...")
 phobert_tokenizer = AutoTokenizer.from_pretrained(PHOBERT_DIR)
-phobert_model     = AutoModelForSequenceClassification.from_pretrained(PHOBERT_DIR)
+phobert_model = AutoModelForSequenceClassification.from_pretrained(PHOBERT_DIR)
 phobert_model.eval()
 with open(os.path.join(PHOBERT_DIR, "label_map.json"), encoding="utf-8") as f:
     _label_map = json.load(f)
@@ -96,25 +97,34 @@ print("[Whisper] Đang load model...")
 whisper_model = WhisperModel("medium", device="cuda", compute_type="float16")
 print("[Whisper] Model sẵn sàng!")
 
+# Load Silero VAD
+print("[Silero VAD] Đang load model...")
+silero_model, silero_utils = torch.hub.load(
+    repo_or_dir="snakers4/silero-vad", model="silero_vad", force_reload=False
+)
+(get_speech_timestamps, _, _, _, _) = silero_utils
+print("[Silero VAD] Model sẵn sàng!")
+
 # Hàng đợi audio giữa serial_reader và VAD
 audio_queue = queue.Queue()
 
 # Tham số VAD
-SPEECH_THRESHOLD    = 500   # ngưỡng biên độ phát hiện tiếng (ESP32 đã pre-filter ở 800)
-SILENCE_DURATION    = 0.8   # giây im lặng để kết thúc câu
-MIN_SPEECH_DURATION = 0.3   # câu tối thiểu để xử lý
+SPEECH_THRESHOLD = 500  # ngưỡng biên độ phát hiện tiếng (ESP32 đã pre-filter ở 800)
+SILENCE_DURATION = 0.8  # giây im lặng để kết thúc câu
+MIN_SPEECH_DURATION = 0.3  # câu tối thiểu để xử lý
 
 current_level = 0
 
 # Recording state
-is_recording     = False
+is_recording = False
 recording_buffer = []
-recording_lock   = threading.Lock()
-last_wav_bytes   = None
+recording_lock = threading.Lock()
+last_wav_bytes = None
 recording_started_at = None
 
 
 # ─── WebSocket audio receiver (nhận audio từ ESP32) ──────────
+
 
 async def esp32_audio_handler(websocket):
     print(f"[AudioWS] ESP32 kết nối: {websocket.remote_address}")
@@ -125,7 +135,7 @@ async def esp32_audio_handler(websocket):
             if len(message) != CHUNK_SAMPLES * 2:
                 continue
 
-            samples = list(struct.unpack(f'<{CHUNK_SAMPLES}h', message))
+            samples = list(struct.unpack(f"<{CHUNK_SAMPLES}h", message))
 
             with recording_lock:
                 if is_recording:
@@ -136,10 +146,12 @@ async def esp32_audio_handler(websocket):
     except websockets.exceptions.ConnectionClosed:
         print("[AudioWS] ESP32 ngắt kết nối")
 
+
 async def _audio_ws_main():
     async with websockets.serve(esp32_audio_handler, "0.0.0.0", 5001):
         print("[AudioWS] Đang lắng nghe ESP32 tại port 5001...")
         await asyncio.Future()
+
 
 def run_audio_ws():
     asyncio.run(_audio_ws_main())
@@ -147,52 +159,27 @@ def run_audio_ws():
 
 # ─── VAD + Whisper ───────────────────────────────────────────
 
+
 def vad_and_transcribe():
     speech_buffer = []
-    silence_samples = 0
-    is_speaking = False
-    silence_limit      = int(SILENCE_DURATION    * SAMPLE_RATE)
     min_speech_samples = int(MIN_SPEECH_DURATION * SAMPLE_RATE)
 
     while True:
         try:
-            samples = audio_queue.get(timeout=0.5)
-        except queue.Empty:
-            # Không nhận packet trong 0.5s = ESP32 VAD đã dừng gửi = im lặng
-            if is_speaking:
-                if len(speech_buffer) >= min_speech_samples:
-                    threading.Thread(
-                        target=process_speech,
-                        args=(speech_buffer.copy(),),
-                        daemon=True
-                    ).start()
-                speech_buffer.clear()
-                silence_samples = 0
-                is_speaking = False
-            continue
-
-        avg_amp = sum(abs(s) for s in samples) / len(samples)
-
-        if avg_amp > SPEECH_THRESHOLD:
-            if not is_speaking:
-                is_speaking = True
-                print("[VAD] Phat hien giong noi...")
+            samples = audio_queue.get(
+                timeout=0.6
+            )  # Đợi 0.6s để xem ESP32 có gửi tiếp không
             speech_buffer.extend(samples)
-            silence_samples = 0
-        else:
-            if is_speaking:
-                speech_buffer.extend(samples)
-                silence_samples += len(samples)
-                if silence_samples >= silence_limit:
-                    if len(speech_buffer) >= min_speech_samples:
-                        threading.Thread(
-                            target=process_speech,
-                            args=(speech_buffer.copy(),),
-                            daemon=True
-                        ).start()
-                    speech_buffer.clear()
-                    silence_samples = 0
-                    is_speaking = False
+        except queue.Empty:
+            # Timeout (Không còn data từ ESP32) -> ESP32 đã gập mic
+            if len(speech_buffer) >= min_speech_samples:
+                print(
+                    f"[Buffer] Đã gom được đoạn âm thanh ({len(speech_buffer)} mẫu). Đưa vào cắt gọt..."
+                )
+                threading.Thread(
+                    target=process_speech, args=(speech_buffer.copy(),), daemon=True
+                ).start()
+            speech_buffer.clear()
 
 
 def process_speech(samples):
@@ -205,7 +192,28 @@ def process_speech(samples):
     audio_out = enhanced[0].numpy()
     if DF_SR != SAMPLE_RATE:
         audio_out = resample_poly(audio_out, 1, DF_SR // SAMPLE_RATE)
-    samples = (audio_out * 32768.0).clip(-32768, 32767).astype(np.int16).tolist()
+
+    # Lọc tinh bằng Silero VAD
+    vad_tensor = torch.from_numpy(audio_out)
+    # Hạ threshold xuống 0.25 và min_speech_duration xuống 100ms để bắt nhạy hơn các câu ngắn
+    speech_timestamps = get_speech_timestamps(
+        vad_tensor, 
+        silero_model, 
+        sampling_rate=SAMPLE_RATE, 
+        threshold=0.25, 
+        min_speech_duration_ms=100
+    )
+
+    if len(speech_timestamps) == 0:
+        print("[Silero VAD] Cắt gọt thất bại: Toàn là tiếng ồn tĩnh. ĐÃ HỦY BỎ!")
+        return
+
+    # Nối các đoạn chứa tiếng người lại với nhau (Bỏ hoàn toàn khoảng lặng dư thừa)
+    clean_audio = np.concatenate(
+        [audio_out[ts["start"] : ts["end"]] for ts in speech_timestamps]
+    )
+
+    samples = (clean_audio * 32768.0).clip(-32768, 32767).astype(np.int16).tolist()
 
     wav_io = io.BytesIO()
     with wave.open(wav_io, "wb") as wf:
@@ -221,11 +229,11 @@ def process_speech(samples):
         beam_size=5,
         temperature=0,
         initial_prompt="bật quạt, tắt quạt, tăng tốc, quạt số một, quạt số hai, quạt số ba, quạt mạnh, một, hai, ba",
-        no_speech_threshold=0.6,
+        no_speech_threshold=0.8,
         condition_on_previous_text=False,
-        compression_ratio_threshold=1.8
+        compression_ratio_threshold=1.8,
     )
-    segments = [seg for seg in segments if seg.no_speech_prob < 0.6]
+    segments = [seg for seg in segments if seg.no_speech_prob < 0.8]
     if not segments:
         print("[Whisper] BỎ QUA (no_speech_prob cao)")
         return
@@ -243,13 +251,17 @@ def process_speech(samples):
 
 last_command_time = 0
 
+
 def predict_intent(text: str) -> str:
-    inputs = phobert_tokenizer(text, return_tensors="pt", truncation=True, max_length=64)
+    inputs = phobert_tokenizer(
+        text, return_tensors="pt", truncation=True, max_length=64
+    )
     with torch.no_grad():
         logits = phobert_model(**inputs).logits
     probs = torch.softmax(logits, dim=-1)
     confidence, idx = probs.max(dim=-1)
     return INTENT_LABELS[idx.item()], confidence.item()
+
 
 def parse_and_execute(text):
     global current_level, last_command_time
@@ -257,8 +269,23 @@ def parse_and_execute(text):
     if time.time() - last_command_time < 2.0:
         return
 
-    KEYWORDS = ["quạt", "bật", "tắt", "số", "tăng", "giảm", "mạnh",
-                "nhẹ", "nóng", "lạnh", "một", "hai", "ba", "cấp", "vừa"]
+    KEYWORDS = [
+        "quạt",
+        "bật",
+        "tắt",
+        "số",
+        "tăng",
+        "giảm",
+        "mạnh",
+        "nhẹ",
+        "nóng",
+        "lạnh",
+        "một",
+        "hai",
+        "ba",
+        "cấp",
+        "vừa",
+    ]
     has_keyword = any(w in text.lower() for w in KEYWORDS)
 
     intent, confidence = predict_intent(text)
@@ -282,25 +309,32 @@ def parse_and_execute(text):
         socketio.emit("command", {"level": 1, "name": LEVEL_NAME[1]})
     elif intent == "LEVEL_2":
         _call_esp32("/tat")
-        for _ in range(2): _call_esp32("/tang")
+        for _ in range(2):
+            _call_esp32("/tang")
         current_level = 2
         socketio.emit("command", {"level": 2, "name": LEVEL_NAME[2]})
     elif intent == "LEVEL_3":
         _call_esp32("/tat")
-        for _ in range(3): _call_esp32("/tang")
+        for _ in range(3):
+            _call_esp32("/tang")
         current_level = 3
         socketio.emit("command", {"level": 3, "name": LEVEL_NAME[3]})
     elif intent == "INCREASE":
         if current_level < 3:
             _call_esp32("/tang")
             current_level += 1
-            socketio.emit("command", {"level": current_level, "name": LEVEL_NAME[current_level]})
+            socketio.emit(
+                "command", {"level": current_level, "name": LEVEL_NAME[current_level]}
+            )
     elif intent == "DECREASE":
         if current_level > 1:
             _call_esp32("/tat")
-            for _ in range(current_level - 1): _call_esp32("/tang")
+            for _ in range(current_level - 1):
+                _call_esp32("/tang")
             current_level -= 1
-            socketio.emit("command", {"level": current_level, "name": LEVEL_NAME[current_level]})
+            socketio.emit(
+                "command", {"level": current_level, "name": LEVEL_NAME[current_level]}
+            )
         elif current_level == 1:
             _call_esp32("/tat")
             current_level = 0
@@ -313,6 +347,7 @@ def parse_and_execute(text):
 
 # ─── Routes ──────────────────────────────────────────────────
 
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -320,11 +355,13 @@ def index():
 
 @app.route("/api/status")
 def api_status():
-    return jsonify({
-        "level": current_level,
-        "color": COLOR_MAP[current_level],
-        "name":  LEVEL_NAME[current_level],
-    })
+    return jsonify(
+        {
+            "level": current_level,
+            "color": COLOR_MAP[current_level],
+            "name": LEVEL_NAME[current_level],
+        }
+    )
 
 
 @app.route("/api/tang", methods=["POST"])
@@ -332,12 +369,14 @@ def api_tang():
     global current_level
     esp32_ok = _call_esp32("/tang")
     current_level = (current_level + 1) % 4
-    return jsonify({
-        "level": current_level,
-        "color": COLOR_MAP[current_level],
-        "name":  LEVEL_NAME[current_level],
-        "esp32_ok": esp32_ok,
-    })
+    return jsonify(
+        {
+            "level": current_level,
+            "color": COLOR_MAP[current_level],
+            "name": LEVEL_NAME[current_level],
+            "esp32_ok": esp32_ok,
+        }
+    )
 
 
 @app.route("/api/tat", methods=["POST"])
@@ -345,12 +384,14 @@ def api_tat():
     global current_level
     esp32_ok = _call_esp32("/tat")
     current_level = 0
-    return jsonify({
-        "level": 0,
-        "color": COLOR_MAP[0],
-        "name":  LEVEL_NAME[0],
-        "esp32_ok": esp32_ok,
-    })
+    return jsonify(
+        {
+            "level": 0,
+            "color": COLOR_MAP[0],
+            "name": LEVEL_NAME[0],
+            "esp32_ok": esp32_ok,
+        }
+    )
 
 
 @app.route("/api/set/<int:level>", methods=["POST"])
@@ -361,8 +402,16 @@ def api_set_level(level):
     for _ in range(level):
         _call_esp32("/tang")
     current_level = level
-    socketio.emit("command", {"level": current_level, "name": LEVEL_NAME[current_level]})
-    return jsonify({"level": current_level, "color": COLOR_MAP[current_level], "name": LEVEL_NAME[current_level]})
+    socketio.emit(
+        "command", {"level": current_level, "name": LEVEL_NAME[current_level]}
+    )
+    return jsonify(
+        {
+            "level": current_level,
+            "color": COLOR_MAP[current_level],
+            "name": LEVEL_NAME[current_level],
+        }
+    )
 
 
 @app.route("/api/giam", methods=["POST"])
@@ -373,8 +422,16 @@ def api_giam():
         _call_esp32("/tat")
         for _ in range(current_level):
             _call_esp32("/tang")
-    socketio.emit("command", {"level": current_level, "name": LEVEL_NAME[current_level]})
-    return jsonify({"level": current_level, "color": COLOR_MAP[current_level], "name": LEVEL_NAME[current_level]})
+    socketio.emit(
+        "command", {"level": current_level, "name": LEVEL_NAME[current_level]}
+    )
+    return jsonify(
+        {
+            "level": current_level,
+            "color": COLOR_MAP[current_level],
+            "name": LEVEL_NAME[current_level],
+        }
+    )
 
 
 @app.route("/api/record/start", methods=["POST"])
@@ -417,7 +474,9 @@ def api_record_stop():
         wf.writeframes(struct.pack(f"<{len(samples16)}h", *samples16))
     last_wav_bytes = wav_io.getvalue()
     duration = round(len(buf) / wav_rate, 2)
-    return jsonify({"ok": True, "samples": len(buf), "duration": duration, "sample_rate": wav_rate})
+    return jsonify(
+        {"ok": True, "samples": len(buf), "duration": duration, "sample_rate": wav_rate}
+    )
 
 
 @app.route("/api/record/audio")

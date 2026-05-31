@@ -6,14 +6,19 @@
 #include <WebSocketsClient.h>
 
 // IP của Python server (máy tính chạy server.py)
-#define SERVER_IP "YOUR_SERVER_IP"   // ← thay bằng IP máy tính chạy server.py
+#define SERVER_IP "10.86.21.68"   // ← thay bằng IP máy tính chạy server.py
 #define SERVER_PORT 5001
 
-const char *ssid = "YOUR_WIFI_SSID";       // ← thay bằng tên WiFi
-const char *password = "YOUR_WIFI_PASSWORD"; // ← thay bằng mật khẩu WiFi
+const char *ssid = "Khang";       // ← thay bằng tên WiFi
+const char *password = "ycdp6685"; // ← thay bằng mật khẩu WiFi
 
 #define LED_ONBOARD_PIN 48
-#define FAN_PIN 4
+#define FAN_IN1_PIN 4
+#define FAN_IN2_PIN 5
+#define FAN_PWM_CH_IN1 0
+#define FAN_PWM_CH_IN2 1
+#define FAN_PWM_FREQ 1000
+#define FAN_PWM_RES_BITS 8
 #define I2S_WS 11
 #define I2S_SD 10
 #define I2S_SCK 12
@@ -25,22 +30,40 @@ WebServer server(80);
 WebSocketsClient webSocket;
 
 int capDoHienTai = 0;
+unsigned long lastCmdTime = 0;
+const unsigned long COOLDOWN_MS = 1000; // 1 giây cooldown
 
 #define bufferLen 64
-#define SEND_BUFFER_SIZE 512
+#define SEND_BUFFER_SIZE 1024 // Tăng gấp đôi size
 
 // VAD
-#define VAD_THRESHOLD 500
-#define VAD_HANGOVER_PACKETS 12
+#define VAD_THRESHOLD 400
+#define VAD_HANGOVER_PACKETS 8 // Tăng nhẹ để đảm bảo thu âm trọn vẹn câu lệnh
 
 // ─── FreeRTOS Queue ───────────────────────────────────────────────────────────
-#define QUEUE_SIZE 4
+#define QUEUE_SIZE 8 // Tăng hàng đợi
 
 typedef struct {
   int16_t data[SEND_BUFFER_SIZE];
 } AudioPacket;
 
 QueueHandle_t audioQueue;
+
+void setFanDuty(uint8_t duty)
+{
+  // L9110S cần 2 ngõ vào: IN1 PWM, IN2 LOW để quay 1 chiều.
+  if (duty == 0)
+  {
+    ledcWrite(FAN_PWM_CH_IN1, 0);
+    ledcWrite(FAN_PWM_CH_IN2, 0);
+  }
+  else
+  {
+    ledcWrite(FAN_PWM_CH_IN1, duty);
+    ledcWrite(FAN_PWM_CH_IN2, 0);
+  }
+  Serial.printf("[FAN] duty=%u (IN1 PWM, IN2 LOW)\n", duty);
+}
 
 // ─── I2S setup ────────────────────────────────────────────────────────────────
 void i2s_install()
@@ -90,19 +113,19 @@ void capNhatTrangThai()
   switch (capDoHienTai)
   {
   case 0:
-    analogWrite(FAN_PIN, 0);
+    setFanDuty(0);
     leds[0] = CRGB::Black;
     break;
   case 1:
-    analogWrite(FAN_PIN, 80);
+    setFanDuty(170);
     leds[0] = CRGB::Red;
     break;
   case 2:
-    analogWrite(FAN_PIN, 150);
+    setFanDuty(220);
     leds[0] = CRGB::Yellow;
     break;
   case 3:
-    analogWrite(FAN_PIN, 255);
+    setFanDuty(255);
     leds[0] = CRGB::Green;
     break;
   }
@@ -129,6 +152,7 @@ void audioTask(void *pvParameters)
   int16_t localBuf[SEND_BUFFER_SIZE];
   int localIdx = 0;
   int vadHangover = 0;
+  int continuousLoud = 0; // Đếm số khung hình ồn liên tiếp
 
   Serial.println("[AudioTask] Bat dau tren Core 0");
 
@@ -152,8 +176,11 @@ void audioTask(void *pvParameters)
             energy += abs(localBuf[j]);
           int32_t avgAmp = energy / SEND_BUFFER_SIZE;
 
-          if (avgAmp > VAD_THRESHOLD)
+          if (avgAmp > VAD_THRESHOLD) {
+            // Kích hoạt ngay lập tức để không bị mất các phụ âm đầu (t, q, b...)
+            // Server đã có Silero VAD lo việc lọc ồn nên không sợ gửi nhầm nhiễu!
             vadHangover = VAD_HANGOVER_PACKETS;
+          }
 
           if (vadHangover > 0)
           {
@@ -197,7 +224,21 @@ void setup()
 {
   Serial.begin(921600);
 
-  pinMode(FAN_PIN, OUTPUT);
+  pinMode(FAN_IN1_PIN, OUTPUT);
+  pinMode(FAN_IN2_PIN, OUTPUT);
+  ledcSetup(FAN_PWM_CH_IN1, FAN_PWM_FREQ, FAN_PWM_RES_BITS);
+  ledcSetup(FAN_PWM_CH_IN2, FAN_PWM_FREQ, FAN_PWM_RES_BITS);
+  ledcAttachPin(FAN_IN1_PIN, FAN_PWM_CH_IN1);
+  ledcAttachPin(FAN_IN2_PIN, FAN_PWM_CH_IN2);
+  setFanDuty(0);
+
+  // Tự test nhanh khi boot để xác nhận phần cứng quạt/driver có phản hồi.
+  delay(200);
+  Serial.println("[FAN] Boot self-test: FULL 2s");
+  setFanDuty(255);
+  delay(2000);
+  setFanDuty(0);
+
   FastLED.addLeds<WS2812B, LED_ONBOARD_PIN, GRB>(leds, NUM_LEDS);
   FastLED.setBrightness(50);
 
@@ -207,25 +248,30 @@ void setup()
 
   WiFi.begin(ssid, password);
 
-  int soLanThu = 0;
-  while (WiFi.status() != WL_CONNECTED && soLanThu < 20)
+  Serial.print("Dang ket noi WiFi...");
+  while (WiFi.status() != WL_CONNECTED)
   {
     delay(500);
-    soLanThu++;
+    Serial.print(".");
   }
 
   if (WiFi.status() == WL_CONNECTED)
   {
-    Serial.print("IP ESP32: ");
+    Serial.println("");
+    Serial.print("WiFi da ket noi! IP ESP32: ");
     Serial.println(WiFi.localIP());
     leds[0] = CRGB::Blue;
     FastLED.show();
     delay(500);
     server.on("/", handleRoot);
     server.on("/tang", []()
-              { capDoHienTai++; if(capDoHienTai>3) capDoHienTai=0; capNhatTrangThai(); });
+              { 
+                capDoHienTai++; if(capDoHienTai>3) capDoHienTai=0; capNhatTrangThai(); 
+              });
     server.on("/tat", []()
-              { capDoHienTai=0; capNhatTrangThai(); });
+              { 
+                capDoHienTai=0; capNhatTrangThai(); 
+              });
     server.begin();
   }
   else
@@ -248,7 +294,7 @@ void setup()
   xTaskCreatePinnedToCore(
       audioTask,    // hàm task
       "AudioTask",  // tên (debug)
-      4096,         // stack size (bytes)
+      8192,         // stack size (bytes)
       NULL,         // tham số truyền vào
       2,            // priority (cao hơn networkTask)
       NULL,         // task handle (không cần)
@@ -258,7 +304,7 @@ void setup()
   xTaskCreatePinnedToCore(
       networkTask,
       "NetworkTask",
-      8192,         // stack lớn hơn vì WebSocket dùng nhiều bộ nhớ
+      16384,        // stack lớn hơn vì WebSocket dùng nhiều bộ nhớ
       NULL,
       1,            // priority thấp hơn
       NULL,
